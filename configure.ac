@@ -36,6 +36,8 @@ AC_SUBST([SQLITE3_LIBS])
 
 AC_CONFIG_FILES([
     Makefile
+    gaudere.pc
+    gaudere-persistence-sqlite.pc
     include/Makefile
     include/gaudere/Makefile
     include/gaudere/persistence/Makefile

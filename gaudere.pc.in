@@ -1,0 +1,10 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: Gaudere
+Description: Reusable scheduling and recovery components
+Version: @PACKAGE_VERSION@
+Libs: -L${libdir} -lgaudere
+Cflags: -I${includedir}

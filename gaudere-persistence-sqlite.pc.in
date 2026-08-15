@@ -1,0 +1,12 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: Gaudere SQLite persistence
+Description: SQLite persistence adapter for Gaudere
+Version: @PACKAGE_VERSION@
+Requires: gaudere
+Libs: -L${libdir} -lgaudere-persistence-sqlite
+Libs.private: @SQLITE3_LIBS@
+Cflags: -I${includedir}
