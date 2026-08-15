@@ -1,1 +1,1 @@
-SUBDIRS = scheduling
+SUBDIRS = persistence scheduling

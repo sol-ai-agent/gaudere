@@ -25,10 +25,21 @@ AC_SEARCH_LIBS(
     [],
     [AC_MSG_FAILURE([POSIX threads support is required])])
 
+AC_CHECK_HEADERS([sqlite3.h], [],
+    [AC_MSG_FAILURE([SQLite development headers are required])])
+gaudere_saved_LIBS="$LIBS"
+AC_CHECK_LIB([sqlite3], [sqlite3_open_v2],
+    [SQLITE3_LIBS="-lsqlite3"],
+    [AC_MSG_FAILURE([SQLite development library is required])])
+LIBS="$gaudere_saved_LIBS"
+AC_SUBST([SQLITE3_LIBS])
+
 AC_CONFIG_FILES([
     Makefile
     include/Makefile
     include/gaudere/Makefile
+    include/gaudere/persistence/Makefile
+    include/gaudere/persistence/sqlite/Makefile
     include/gaudere/scheduling/Makefile
     include/gaudere/scheduling/wake/Makefile
     src/Makefile
