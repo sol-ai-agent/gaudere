@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  fedora:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+
+    steps:
+      - name: Install build dependencies
+        run: >
+          dnf install -y
+          autoconf
+          automake
+          gcc-c++
+          git
+          libtool
+          make
+          sqlite-devel
+
+      - uses: actions/checkout@v4
+
+      - name: Generate build system
+        run: autoreconf --install --force
+
+      - name: Configure
+        run: >
+          mkdir build &&
+          cd build &&
+          ../configure
+          CXXFLAGS="-O2 -Wall -Wextra -Wpedantic -Werror"
+
+      - name: Build and test
+        run: make --directory=build --jobs=2 check
