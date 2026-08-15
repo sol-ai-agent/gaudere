@@ -23,6 +23,7 @@ jobs:
           git
           libtool
           make
+          pkgconf-pkg-config
           sqlite-devel
 
       - uses: actions/checkout@v4
@@ -39,3 +40,9 @@ jobs:
 
       - name: Build and test
         run: make --directory=build --jobs=2 check
+
+      - name: Verify installation metadata
+        run: |
+          make --directory=build install DESTDIR="$PWD/stage"
+          export PKG_CONFIG_PATH="$PWD/stage/usr/local/lib/pkgconfig"
+          pkg-config --define-variable=prefix="$PWD/stage/usr/local"             --cflags --libs gaudere gaudere-persistence-sqlite
