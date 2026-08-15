@@ -19,10 +19,19 @@ AC_COMPILE_IFELSE(
     [AC_MSG_RESULT([yes])],
     [AC_MSG_FAILURE([a C++17-compatible compiler is required])])
 
+AC_SEARCH_LIBS(
+    [pthread_create],
+    [pthread],
+    [],
+    [AC_MSG_FAILURE([POSIX threads support is required])])
+
 AC_CONFIG_FILES([
     Makefile
     include/Makefile
     include/gaudere/Makefile
     include/gaudere/scheduling/Makefile
+    include/gaudere/scheduling/wake/Makefile
+    src/Makefile
+    tests/Makefile
 ])
 AC_OUTPUT
