@@ -3,7 +3,9 @@
 
 #include <gaudere/work/TaskStore.hpp>
 
+#include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace gaudere::work {
@@ -36,6 +38,8 @@ public:
 
     [[nodiscard]] RuntimeState state() const noexcept;
     void recover();
+    [[nodiscard]] std::size_t recover_expired();
+    [[nodiscard]] std::optional<TimePoint> next_recovery_at() const;
     [[nodiscard]] SubmitResult submit(const Task& task);
     [[nodiscard]] bool start(const std::string& id, std::string lease_owner);
     [[nodiscard]] FinishResult succeed(const std::string& id,
