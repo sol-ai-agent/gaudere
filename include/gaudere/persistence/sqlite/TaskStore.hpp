@@ -21,6 +21,8 @@ public:
         const std::string& id) const override;
     [[nodiscard]] std::optional<work::Task> find_by_idempotency_key(
         const std::string& key) const override;
+    [[nodiscard]] std::optional<work::Task> find_pending_for(
+        const std::vector<std::string>& accepted_kinds) const override;
     [[nodiscard]] std::vector<work::Task> leased_with_expired_lease(
         work::TimePoint now) const override;
     [[nodiscard]] bool has_active() const override;

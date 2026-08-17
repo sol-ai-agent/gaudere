@@ -219,6 +219,40 @@ std::optional<Task> TaskStore::find_by_idempotency_key(const std::string& key) c
     throw std::runtime_error(sqlite3_errmsg(database_));
 }
 
+std::optional<Task> TaskStore::find_pending_for(
+    const std::vector<std::string>& accepted_kinds) const
+{
+    if (accepted_kinds.empty()) {
+        return std::nullopt;
+    }
+
+    std::string sql = std::string{"SELECT "} + columns
+        + " FROM tasks WHERE status=? AND kind IN (";
+    for (std::size_t index = 0; index < accepted_kinds.size(); ++index) {
+        if (index != 0) {
+            sql += ',';
+        }
+        sql += '?';
+    }
+    sql += ") ORDER BY rowid ASC LIMIT 1";
+
+    Statement statement(database_, sql.c_str());
+    sqlite3_bind_int(statement.get(), 1, static_cast<int>(TaskStatus::pending));
+    for (std::size_t index = 0; index < accepted_kinds.size(); ++index) {
+        bind_text(database_, statement.get(), static_cast<int>(index + 2),
+                  accepted_kinds[index]);
+    }
+
+    const int result = sqlite3_step(statement.get());
+    if (result == SQLITE_ROW) {
+        return read_task(statement.get());
+    }
+    if (result == SQLITE_DONE) {
+        return std::nullopt;
+    }
+    throw std::runtime_error(sqlite3_errmsg(database_));
+}
+
 std::vector<Task> TaskStore::leased_with_expired_lease(const TimePoint now) const
 {
     const std::string sql = std::string{"SELECT "} + columns

@@ -92,6 +92,38 @@ void test_round_trip()
            "task result round-trips atomically with task state");
 }
 
+void test_pending_selection()
+{
+    TemporaryDatabase database;
+    SqliteStore store(database.path.string());
+
+    auto unsupported = make_task("unsupported", "unsupported");
+    unsupported.kind = "provider.missing";
+    store.save(unsupported);
+
+    auto first = make_task("z-first", "z-first");
+    first.kind = "local.echo";
+    store.save(first);
+
+    auto second = make_task("a-second", "a-second");
+    second.kind = "local.echo";
+    store.save(second);
+
+    expect(!store.find_pending_for({}),
+           "empty accepted kind set selects no SQLite task");
+    const auto selected = store.find_pending_for({"local.echo"});
+    expect(selected && selected->id == "z-first",
+           "SQLite selection skips unsupported kinds and preserves insertion order");
+
+    first.status = TaskStatus::running;
+    first.attempts_started = 1;
+    first.lease = Lease{"worker", TimePoint{} + 30s};
+    store.save(first);
+    const auto next = store.find_pending_for({"local.echo"});
+    expect(next && next->id == "a-second",
+           "SQLite selection skips an already active task");
+}
+
 void test_atomic_uniqueness()
 {
     TemporaryDatabase database;
@@ -166,6 +198,7 @@ void test_shared_schema_with_action_store()
 int main()
 {
     test_round_trip();
+    test_pending_selection();
     test_atomic_uniqueness();
     test_recovery_after_reopen();
     test_shared_schema_with_action_store();
