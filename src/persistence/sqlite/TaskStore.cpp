@@ -132,6 +132,7 @@ TaskStore::TaskStore(const std::string& path)
         execute(database_, "PRAGMA journal_mode=WAL;");
         execute(database_, "PRAGMA synchronous=FULL;");
         execute(database_, "PRAGMA busy_timeout=5000;");
+        execute(database_, "BEGIN IMMEDIATE;");
 
         Statement version_statement(database_, "PRAGMA user_version");
         if (sqlite3_step(version_statement.get()) != SQLITE_ROW) {
@@ -142,7 +143,6 @@ TaskStore::TaskStore(const std::string& path)
             throw std::runtime_error("unsupported SQLite schema version");
         }
 
-        execute(database_, "BEGIN IMMEDIATE;");
         execute(database_,
             "CREATE TABLE IF NOT EXISTS tasks ("
             " id TEXT PRIMARY KEY NOT NULL,"
