@@ -12,6 +12,16 @@ The public deadline is a `std::chrono::system_clock::time_point`, so `next()` ca
 
 The scheduler owns no thread, invokes no callback, and contains no persistence or application integration.
 
+## Bounded work tasks
+
+`gaudere::work` defines provider-agnostic task and result contracts for controlled work. A task carries an idempotency key, a kind, typed opaque input, and explicit limits for input bytes, output bytes, runtime lease duration, and attempts.
+
+`gaudere::work::Runtime` owns the lifecycle from pending work through running, cancellation, success, failure, or manual review. Starting work creates a lease bounded by `max_runtime`; expired leases are recovered within the configured attempt budget. Output larger than `max_output_bytes` becomes a durable failure instead of an unbounded result.
+
+`gaudere::persistence::sqlite::TaskStore` persists the task definition, lease, cancellation state, and terminal result in one SQLite row. It shares the versioned state database with the wake `ActionStore` and keeps idempotency keys unique at the database boundary.
+
+The task contract executes no provider call and grants no network or host capability by itself.
+
 ## Namespace conventions
 
 - The root namespace is `gaudere`.
