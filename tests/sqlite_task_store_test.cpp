@@ -80,7 +80,7 @@ void test_round_trip()
            "task definition round-trips");
     expect(loaded && loaded->lease
                && loaded->lease->expires_at == TimePoint{} + 1234ms,
-           "task lease round-trips as milliseconds");
+           "task lease time round-trips as milliseconds");
 
     task.status = TaskStatus::succeeded;
     task.lease.reset();
@@ -122,6 +122,37 @@ void test_pending_selection()
     const auto next = store.find_pending_for({"local.echo"});
     expect(next && next->id == "a-second",
            "SQLite selection skips an already active task");
+}
+
+void test_next_lease_expiry()
+{
+    TemporaryDatabase database;
+    SqliteStore store(database.path.string());
+    expect(!store.next_lease_expiry(),
+           "empty SQLite task store has no recovery deadline");
+
+    auto later = make_task("later", "later");
+    later.status = TaskStatus::running;
+    later.attempts_started = 1;
+    later.lease = Lease{"worker-a", TimePoint{} + 20s};
+    store.save(later);
+
+    auto earlier = make_task("earlier", "earlier");
+    earlier.status = TaskStatus::cancel_requested;
+    earlier.attempts_started = 1;
+    earlier.cancel_reason = "shutdown";
+    earlier.lease = Lease{"worker-b", TimePoint{} + 10s};
+    store.save(earlier);
+
+    expect(store.next_lease_expiry() == TimePoint{} + 10s,
+           "SQLite exposes the earliest active lease expiry");
+
+    earlier.status = TaskStatus::cancelled;
+    earlier.lease.reset();
+    earlier.result = TaskResult{"text/plain", {}, "cancelled", "shutdown"};
+    store.save(earlier);
+    expect(store.next_lease_expiry() == TimePoint{} + 20s,
+           "terminal work is removed from the recovery deadline");
 }
 
 void test_atomic_uniqueness()
@@ -199,6 +230,7 @@ int main()
 {
     test_round_trip();
     test_pending_selection();
+    test_next_lease_expiry();
     test_atomic_uniqueness();
     test_recovery_after_reopen();
     test_shared_schema_with_action_store();

@@ -25,6 +25,7 @@ public:
         const std::vector<std::string>& accepted_kinds) const override;
     [[nodiscard]] std::vector<work::Task> leased_with_expired_lease(
         work::TimePoint now) const override;
+    [[nodiscard]] std::optional<work::TimePoint> next_lease_expiry() const override;
     [[nodiscard]] bool has_active() const override;
     void save(const work::Task& task) override;
 

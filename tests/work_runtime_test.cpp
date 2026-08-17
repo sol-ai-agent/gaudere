@@ -59,6 +59,20 @@ public:
         return result;
     }
 
+    std::optional<TimePoint> next_lease_expiry() const override
+    {
+        std::optional<TimePoint> result;
+        for (const auto& entry : tasks) {
+            const auto& task = entry.second;
+            if ((task.status == TaskStatus::running
+                 || task.status == TaskStatus::cancel_requested)
+                && task.lease && (!result || task.lease->expires_at < *result)) {
+                result = task.lease->expires_at;
+            }
+        }
+        return result;
+    }
+
     bool has_active() const override
     {
         for (const auto& entry : tasks) {
@@ -235,6 +249,33 @@ void test_recovery_and_attempt_limit()
            "expired cancellation completes during recovery");
 }
 
+void test_unexpired_lease_has_future_recovery_deadline()
+{
+    MemoryTaskStore store;
+    TimePoint now = TimePoint{} + 10s;
+
+    auto interrupted = task("interrupted", "interrupted");
+    interrupted.status = TaskStatus::running;
+    interrupted.attempts_started = 1;
+    interrupted.lease = Lease{"dead-worker", now + 5s};
+    store.save(interrupted);
+
+    Runtime runtime(store, [&now] { return now; });
+    runtime.recover();
+    expect(store.find("interrupted")->status == TaskStatus::running,
+           "startup does not steal an unexpired lease");
+    expect(runtime.next_recovery_at() == now + 5s,
+           "runtime exposes the future lease deadline that must wake recovery");
+
+    now += 6s;
+    expect(runtime.recover_expired() == 1,
+           "expired lease can be recovered after startup without restarting");
+    expect(store.find("interrupted")->status == TaskStatus::pending,
+           "post-startup recovery returns interrupted work to pending");
+    expect(!runtime.next_recovery_at(),
+           "terminal or pending work no longer schedules lease recovery");
+}
+
 void test_manual_review_and_draining()
 {
     MemoryTaskStore store;
@@ -264,6 +305,7 @@ int main()
     test_kind_filtered_selection();
     test_cancellation();
     test_recovery_and_attempt_limit();
+    test_unexpired_lease_has_future_recovery_deadline();
     test_manual_review_and_draining();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

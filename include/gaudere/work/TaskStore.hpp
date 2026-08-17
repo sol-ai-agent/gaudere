@@ -28,6 +28,7 @@ public:
 
     [[nodiscard]] virtual std::vector<Task> leased_with_expired_lease(
         TimePoint now) const = 0;
+    [[nodiscard]] virtual std::optional<TimePoint> next_lease_expiry() const = 0;
     [[nodiscard]] virtual bool has_active() const = 0;
     virtual void save(const Task& task) = 0;
 };
