@@ -275,6 +275,23 @@ std::vector<Task> TaskStore::leased_with_expired_lease(const TimePoint now) cons
     }
 }
 
+std::optional<TimePoint> TaskStore::next_lease_expiry() const
+{
+    Statement statement(database_,
+        "SELECT MIN(lease_expires_at_ms) FROM tasks WHERE status IN (?1,?2)");
+    sqlite3_bind_int(statement.get(), 1, static_cast<int>(TaskStatus::running));
+    sqlite3_bind_int(statement.get(), 2, static_cast<int>(TaskStatus::cancel_requested));
+
+    const int result = sqlite3_step(statement.get());
+    if (result != SQLITE_ROW) {
+        throw std::runtime_error(sqlite3_errmsg(database_));
+    }
+    if (sqlite3_column_type(statement.get(), 0) == SQLITE_NULL) {
+        return std::nullopt;
+    }
+    return time_point(sqlite3_column_int64(statement.get(), 0));
+}
+
 bool TaskStore::has_active() const
 {
     Statement statement(database_,
