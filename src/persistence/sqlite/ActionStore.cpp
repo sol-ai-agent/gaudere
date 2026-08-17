@@ -96,6 +96,8 @@ ActionStore::ActionStore(const std::string& path)
         execute(database_, "PRAGMA journal_mode=WAL;");
         execute(database_, "PRAGMA synchronous=FULL;");
         execute(database_, "PRAGMA busy_timeout=5000;");
+        execute(database_, "BEGIN IMMEDIATE;");
+
         Statement version_statement(database_, "PRAGMA user_version");
         if (sqlite3_step(version_statement.get()) != SQLITE_ROW) {
             throw std::runtime_error(sqlite3_errmsg(database_));
@@ -104,7 +106,6 @@ ActionStore::ActionStore(const std::string& path)
         if (version > 2) {
             throw std::runtime_error("unsupported SQLite schema version");
         }
-        execute(database_, "BEGIN IMMEDIATE;");
         execute(database_,
             "CREATE TABLE IF NOT EXISTS actions ("
             " id TEXT PRIMARY KEY NOT NULL,"
