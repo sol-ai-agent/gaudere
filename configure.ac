@@ -44,6 +44,7 @@ AC_CONFIG_FILES([
     include/gaudere/persistence/sqlite/Makefile
     include/gaudere/scheduling/Makefile
     include/gaudere/scheduling/wake/Makefile
+    include/gaudere/work/Makefile
     src/Makefile
     tests/Makefile
 ])
