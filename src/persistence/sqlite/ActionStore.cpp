@@ -101,11 +101,11 @@ ActionStore::ActionStore(const std::string& path)
             throw std::runtime_error(sqlite3_errmsg(database_));
         }
         const int version = sqlite3_column_int(version_statement.get(), 0);
-        if (version > 1) {
+        if (version > 2) {
             throw std::runtime_error("unsupported SQLite schema version");
         }
+        execute(database_, "BEGIN IMMEDIATE;");
         execute(database_,
-            "BEGIN IMMEDIATE;"
             "CREATE TABLE IF NOT EXISTS actions ("
             " id TEXT PRIMARY KEY NOT NULL,"
             " idempotency_key TEXT NOT NULL UNIQUE,"
@@ -115,10 +115,13 @@ ActionStore::ActionStore(const std::string& path)
             " lease_owner TEXT,"
             " lease_expires_at_ms INTEGER,"
             " CHECK((lease_owner IS NULL) = (lease_expires_at_ms IS NULL))"
-            ");"
-            "PRAGMA user_version=1;"
-            "COMMIT;");
+            ");");
+        if (version == 0) {
+            execute(database_, "PRAGMA user_version=1;");
+        }
+        execute(database_, "COMMIT;");
     } catch (...) {
+        sqlite3_exec(database_, "ROLLBACK;", nullptr, nullptr, nullptr);
         sqlite3_close(database_);
         database_ = nullptr;
         throw;
