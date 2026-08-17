@@ -1,3 +1,4 @@
+#include <gaudere/persistence/sqlite/ActionStore.hpp>
 #include <gaudere/persistence/sqlite/TaskStore.hpp>
 #include <gaudere/work/Runtime.hpp>
 
@@ -14,6 +15,7 @@ namespace {
 
 using namespace gaudere::work;
 using SqliteStore = gaudere::persistence::sqlite::TaskStore;
+using ActionSqliteStore = gaudere::persistence::sqlite::ActionStore;
 using namespace std::chrono_literals;
 
 int failures = 0;
@@ -142,6 +144,23 @@ void test_recovery_after_reopen()
            "cancellation survives reopen and completes safely");
 }
 
+void test_shared_schema_with_action_store()
+{
+    TemporaryDatabase database;
+    {
+        ActionSqliteStore actions(database.path.string());
+        SqliteStore tasks(database.path.string());
+    }
+    try {
+        ActionSqliteStore actions(database.path.string());
+        SqliteStore tasks(database.path.string());
+        expect(true, "action and task stores share the versioned SQLite state");
+    } catch (const std::exception& error) {
+        std::cerr << "FAIL: shared schema reopen: " << error.what() << '\n';
+        ++failures;
+    }
+}
+
 } // namespace
 
 int main()
@@ -149,6 +168,7 @@ int main()
     test_round_trip();
     test_atomic_uniqueness();
     test_recovery_after_reopen();
+    test_shared_schema_with_action_store();
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;
