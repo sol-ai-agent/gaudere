@@ -1,5 +1,6 @@
 #include <gaudere/work/Runtime.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -25,6 +26,20 @@ public:
         for (const auto& entry : tasks) {
             if (entry.second.idempotency_key == key) {
                 return entry.second;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::optional<Task> find_pending_for(
+        const std::vector<std::string>& accepted_kinds) const override
+    {
+        for (const auto& entry : tasks) {
+            const auto& task = entry.second;
+            if (task.status == TaskStatus::pending
+                && std::find(accepted_kinds.begin(), accepted_kinds.end(), task.kind)
+                    != accepted_kinds.end()) {
+                return task;
             }
         }
         return std::nullopt;
@@ -135,6 +150,30 @@ void test_definition_and_output_limits()
            "oversized output becomes a durable bounded failure");
 }
 
+void test_kind_filtered_selection()
+{
+    MemoryTaskStore store;
+    auto unsupported = task("a-unsupported", "a-unsupported");
+    unsupported.kind = "provider.missing";
+    store.save(unsupported);
+    auto supported = task("b-supported", "b-supported");
+    supported.kind = "local.echo";
+    store.save(supported);
+
+    expect(!store.find_pending_for({}),
+           "empty accepted kind set selects no pending work");
+    const auto selected = store.find_pending_for({"local.echo"});
+    expect(selected && selected->id == "b-supported",
+           "selection skips pending tasks whose kind has no registered handler");
+
+    supported.status = TaskStatus::running;
+    supported.attempts_started = 1;
+    supported.lease = Lease{"worker", TimePoint{} + 1s};
+    store.save(supported);
+    expect(!store.find_pending_for({"local.echo"}),
+           "selection never returns active work");
+}
+
 void test_cancellation()
 {
     MemoryTaskStore store;
@@ -222,6 +261,7 @@ int main()
 {
     test_submit_and_success();
     test_definition_and_output_limits();
+    test_kind_filtered_selection();
     test_cancellation();
     test_recovery_and_attempt_limit();
     test_manual_review_and_draining();
