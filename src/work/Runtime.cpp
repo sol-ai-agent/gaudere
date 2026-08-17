@@ -58,6 +58,13 @@ RuntimeState Runtime::state() const noexcept
 
 void Runtime::recover()
 {
+    static_cast<void>(recover_expired());
+    state_ = RuntimeState::running;
+}
+
+std::size_t Runtime::recover_expired()
+{
+    std::size_t recovered = 0;
     for (auto task : store_.leased_with_expired_lease(now_())) {
         task.lease.reset();
         if (task.status == TaskStatus::cancel_requested) {
@@ -72,8 +79,14 @@ void Runtime::recover()
                 "task lease expired after the maximum number of attempts");
         }
         store_.save(task);
+        ++recovered;
     }
-    state_ = RuntimeState::running;
+    return recovered;
+}
+
+std::optional<TimePoint> Runtime::next_recovery_at() const
+{
+    return store_.next_lease_expiry();
 }
 
 SubmitResult Runtime::submit(const Task& task)
