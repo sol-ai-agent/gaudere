@@ -12,6 +12,14 @@ The public deadline is a `std::chrono::system_clock::time_point`, so `next()` ca
 
 The scheduler owns no thread, invokes no callback, and contains no persistence or application integration.
 
+## Recoverable external effects
+
+`gaudere::scheduling::wake::Runtime` separates work that is still safe to retry from an external effect that may already have happened. A running `Action` starts with `EffectResult::none`. Immediately before crossing a side-effect boundary, the caller records `record_effect_started()`, which durably changes the effect result to `unknown` while the action remains leased and running.
+
+That marker is deliberately conservative. If the process dies after it is persisted, lease recovery moves the action to `manual_review` rather than `retry_wait`, so a potentially billed, sent, or otherwise externally visible operation is never repeated blindly. A definite response is completed through `record_confirmed_result()`, which atomically records `EffectResult::confirmed`, marks the action succeeded, and releases its lease. `record_unknown_result()` immediately moves an ambiguous result to manual review.
+
+Generic transitions cannot turn an `unknown` external effect into a retry or success; explicit confirmation is required. Effect-free actions may continue to use ordinary lifecycle transitions.
+
 ## Bounded work tasks
 
 `gaudere::work` defines provider-agnostic task and result contracts for controlled work. A task carries an idempotency key, a kind, typed opaque input, and explicit limits for input bytes, output bytes, runtime lease duration, and attempts.
