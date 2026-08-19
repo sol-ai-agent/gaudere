@@ -36,9 +36,17 @@ void Runtime::recover()
 {
     for (auto action : store_.running_with_expired_lease(now_())) {
         action.lease.reset();
-        action.status = action.effect_result == EffectResult::unknown
-            ? ActionStatus::manual_review
-            : ActionStatus::retry_wait;
+        switch (action.effect_result) {
+        case EffectResult::none:
+            action.status = ActionStatus::retry_wait;
+            break;
+        case EffectResult::confirmed:
+            action.status = ActionStatus::succeeded;
+            break;
+        case EffectResult::unknown:
+            action.status = ActionStatus::manual_review;
+            break;
+        }
         store_.save(action);
     }
     state_ = RuntimeState::running;
@@ -82,6 +90,14 @@ bool Runtime::transition(const std::string& id, const ActionStatus status)
     if (!action || !can_transition(action->status, status)) {
         return false;
     }
+    if (action->effect_result == EffectResult::unknown
+        && status != ActionStatus::manual_review) {
+        return false;
+    }
+    if (action->effect_result == EffectResult::confirmed
+        && status != ActionStatus::succeeded) {
+        return false;
+    }
     action->status = status;
     if (status != ActionStatus::running) {
         action->lease.reset();
@@ -90,10 +106,37 @@ bool Runtime::transition(const std::string& id, const ActionStatus status)
     return true;
 }
 
+bool Runtime::record_effect_started(const std::string& id)
+{
+    auto action = store_.find(id);
+    if (!action || action->status != ActionStatus::running
+        || action->effect_result != EffectResult::none) {
+        return false;
+    }
+    action->effect_result = EffectResult::unknown;
+    store_.save(*action);
+    return true;
+}
+
+bool Runtime::record_confirmed_result(const std::string& id)
+{
+    auto action = store_.find(id);
+    if (!action || action->status != ActionStatus::running
+        || action->effect_result != EffectResult::unknown) {
+        return false;
+    }
+    action->effect_result = EffectResult::confirmed;
+    action->status = ActionStatus::succeeded;
+    action->lease.reset();
+    store_.save(*action);
+    return true;
+}
+
 bool Runtime::record_unknown_result(const std::string& id)
 {
     auto action = store_.find(id);
-    if (!action || action->status != ActionStatus::running) {
+    if (!action || action->status != ActionStatus::running
+        || action->effect_result == EffectResult::confirmed) {
         return false;
     }
     action->effect_result = EffectResult::unknown;
