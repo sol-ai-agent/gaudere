@@ -37,6 +37,8 @@ public:
                              std::string lease_owner,
                              Duration lease_duration);
     [[nodiscard]] bool transition(const std::string& id, ActionStatus status);
+    [[nodiscard]] bool record_effect_started(const std::string& id);
+    [[nodiscard]] bool record_confirmed_result(const std::string& id);
     [[nodiscard]] bool record_unknown_result(const std::string& id);
     void request_shutdown() noexcept;
     [[nodiscard]] bool try_mark_safe();
