@@ -53,6 +53,11 @@ std::int64_t milliseconds(const budget::TimePoint value)
         value.time_since_epoch()).count();
 }
 
+budget::TimePoint time_point(const std::int64_t value)
+{
+    return budget::TimePoint{std::chrono::milliseconds{value}};
+}
+
 std::uint64_t count_rows(sqlite3* db, sqlite3_stmt* statement)
 {
     const int result = sqlite3_step(statement);
@@ -60,6 +65,16 @@ std::uint64_t count_rows(sqlite3* db, sqlite3_stmt* statement)
         throw std::runtime_error(sqlite3_errmsg(db));
     }
     return static_cast<std::uint64_t>(sqlite3_column_int64(statement, 0));
+}
+
+void validate_scope_policy(const std::string& scope, const budget::Policy& policy)
+{
+    if (scope.empty()) {
+        throw std::invalid_argument("budget scope must not be empty");
+    }
+    if (!budget::valid_policy(policy)) {
+        throw std::invalid_argument("invalid budget policy");
+    }
 }
 
 budget::ConsumeResult commit_result(sqlite3* db, budget::ConsumeResult result)
@@ -117,14 +132,9 @@ budget::ConsumeResult BudgetStore::consume(
     const budget::TimePoint now,
     const budget::Policy& policy)
 {
-    if (scope.empty()) {
-        throw std::invalid_argument("budget scope must not be empty");
-    }
+    validate_scope_policy(scope, policy);
     if (idempotency_key.empty()) {
         throw std::invalid_argument("budget idempotency key must not be empty");
-    }
-    if (!budget::valid_policy(policy)) {
-        throw std::invalid_argument("invalid budget policy");
     }
 
     execute(database_, "BEGIN IMMEDIATE;");
@@ -203,6 +213,71 @@ budget::ConsumeResult BudgetStore::consume(
         }
 
         return commit_result(database_, budget::ConsumeResult::accepted);
+    } catch (...) {
+        sqlite3_exec(database_, "ROLLBACK;", nullptr, nullptr, nullptr);
+        throw;
+    }
+}
+
+budget::Snapshot BudgetStore::snapshot(
+    const std::string& scope,
+    const budget::TimePoint now,
+    const budget::Policy& policy)
+{
+    validate_scope_policy(scope, policy);
+
+    execute(database_, "BEGIN;");
+    try {
+        budget::Snapshot result;
+
+        {
+            Statement statement(database_,
+                "SELECT COUNT(*) FROM budget_consumptions WHERE scope=?1");
+            bind_text(database_, statement.get(), 1, scope);
+            result.total_used = count_rows(database_, statement.get());
+        }
+
+        const std::int64_t now_ms = milliseconds(now);
+        std::optional<std::int64_t> latest_ms;
+        {
+            Statement statement(database_,
+                "SELECT MAX(consumed_at_ms) FROM budget_consumptions WHERE scope=?1");
+            bind_text(database_, statement.get(), 1, scope);
+            const int step = sqlite3_step(statement.get());
+            if (step != SQLITE_ROW) {
+                throw std::runtime_error(sqlite3_errmsg(database_));
+            }
+            if (sqlite3_column_type(statement.get(), 0) != SQLITE_NULL) {
+                latest_ms = sqlite3_column_int64(statement.get(), 0);
+                result.last_consumed_at = time_point(*latest_ms);
+            }
+        }
+
+        {
+            const auto cutoff = now - policy.window;
+            Statement statement(database_,
+                "SELECT COUNT(*) FROM budget_consumptions "
+                "WHERE scope=?1 AND consumed_at_ms>?2");
+            bind_text(database_, statement.get(), 1, scope);
+            sqlite3_bind_int64(statement.get(), 2, milliseconds(cutoff));
+            result.in_window_used = count_rows(database_, statement.get());
+        }
+
+        if (result.total_used >= policy.max_total) {
+            result.next_new_consumption = budget::ConsumeResult::total_exhausted;
+        } else if (latest_ms && *latest_ms > now_ms) {
+            result.next_new_consumption = budget::ConsumeResult::clock_rollback;
+        } else if (latest_ms
+                   && now_ms - *latest_ms < policy.min_interval.count()) {
+            result.next_new_consumption = budget::ConsumeResult::cooldown;
+        } else if (result.in_window_used >= policy.max_in_window) {
+            result.next_new_consumption = budget::ConsumeResult::window_exhausted;
+        } else {
+            result.next_new_consumption = budget::ConsumeResult::accepted;
+        }
+
+        execute(database_, "COMMIT;");
+        return result;
     } catch (...) {
         sqlite3_exec(database_, "ROLLBACK;", nullptr, nullptr, nullptr);
         throw;
