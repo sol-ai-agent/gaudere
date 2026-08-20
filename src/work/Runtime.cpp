@@ -12,9 +12,13 @@ bool active(const TaskStatus status) noexcept
     return status == TaskStatus::running || status == TaskStatus::cancel_requested;
 }
 
-TaskResult failure_result(std::string code, std::string message)
+TaskResult failure_result(std::string code,
+                          std::string message,
+                          std::string metadata_content_type = {},
+                          std::string metadata = {})
 {
-    return TaskResult{"text/plain", {}, std::move(code), std::move(message)};
+    return TaskResult{"text/plain", {}, std::move(code), std::move(message),
+                      std::move(metadata_content_type), std::move(metadata)};
 }
 
 } // namespace
@@ -123,10 +127,13 @@ bool Runtime::start(const std::string& id, std::string lease_owner)
 
 FinishResult Runtime::succeed(const std::string& id,
                               std::string output,
-                              std::string content_type)
+                              std::string content_type,
+                              std::string metadata_content_type,
+                              std::string metadata)
 {
     auto task = store_.find(id);
-    if (!task || !active(task->status) || content_type.empty()) {
+    if (!task || !active(task->status) || content_type.empty()
+        || (metadata_content_type.empty() != metadata.empty())) {
         return FinishResult::unavailable;
     }
     if (output.size() > task->limits.max_output_bytes) {
@@ -140,7 +147,8 @@ FinishResult Runtime::succeed(const std::string& id,
     }
     task->status = TaskStatus::succeeded;
     task->lease.reset();
-    task->result = TaskResult{std::move(content_type), std::move(output), {}, {}};
+    task->result = TaskResult{std::move(content_type), std::move(output), {}, {},
+                              std::move(metadata_content_type), std::move(metadata)};
     store_.save(*task);
     return FinishResult::accepted;
 }
@@ -148,33 +156,43 @@ FinishResult Runtime::succeed(const std::string& id,
 bool Runtime::finish_failure(const std::string& id,
                              const TaskStatus status,
                              std::string failure_code,
-                             std::string failure_message)
+                             std::string failure_message,
+                             std::string metadata_content_type,
+                             std::string metadata)
 {
     auto task = store_.find(id);
-    if (!task || !active(task->status) || failure_code.empty()) {
+    if (!task || !active(task->status) || failure_code.empty()
+        || (metadata_content_type.empty() != metadata.empty())) {
         return false;
     }
     task->status = status;
     task->lease.reset();
-    task->result = failure_result(std::move(failure_code), std::move(failure_message));
+    task->result = failure_result(std::move(failure_code), std::move(failure_message),
+                                  std::move(metadata_content_type), std::move(metadata));
     store_.save(*task);
     return true;
 }
 
 bool Runtime::fail(const std::string& id,
                    std::string failure_code,
-                   std::string failure_message)
+                   std::string failure_message,
+                   std::string metadata_content_type,
+                   std::string metadata)
 {
     return finish_failure(id, TaskStatus::failed,
-                          std::move(failure_code), std::move(failure_message));
+                          std::move(failure_code), std::move(failure_message),
+                          std::move(metadata_content_type), std::move(metadata));
 }
 
 bool Runtime::require_manual_review(const std::string& id,
                                     std::string failure_code,
-                                    std::string failure_message)
+                                    std::string failure_message,
+                                    std::string metadata_content_type,
+                                    std::string metadata)
 {
     return finish_failure(id, TaskStatus::manual_review,
-                          std::move(failure_code), std::move(failure_message));
+                          std::move(failure_code), std::move(failure_message),
+                          std::move(metadata_content_type), std::move(metadata));
 }
 
 bool Runtime::request_cancel(const std::string& id, std::string reason)
