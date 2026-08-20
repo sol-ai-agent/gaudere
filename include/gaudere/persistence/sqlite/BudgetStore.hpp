@@ -23,6 +23,11 @@ public:
         budget::TimePoint now,
         const budget::Policy& policy) override;
 
+    [[nodiscard]] budget::Snapshot snapshot(
+        const std::string& scope,
+        budget::TimePoint now,
+        const budget::Policy& policy) override;
+
 private:
     sqlite3* database_ = nullptr;
 };
