@@ -2,6 +2,8 @@
 #include <gaudere/persistence/sqlite/TaskStore.hpp>
 #include <gaudere/work/Runtime.hpp>
 
+#include <sqlite3.h>
+
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -84,12 +86,96 @@ void test_round_trip()
 
     task.status = TaskStatus::succeeded;
     task.lease.reset();
-    task.result = TaskResult{"application/json", "{\"ok\":true}", {}, {}};
+    task.result = TaskResult{"application/json", "{\"ok\":true}", {}, {},
+                             "application/json", "{\"tokens\":7}"};
     store.save(task);
     const auto completed = store.find("a");
     expect(completed && completed->result
-               && completed->result->output == "{\"ok\":true}",
-           "task result round-trips atomically with task state");
+               && completed->result->output == "{\"ok\":true}"
+               && completed->result->metadata_content_type == "application/json"
+               && completed->result->metadata == "{\"tokens\":7}",
+           "task result and structured metadata round-trip atomically");
+}
+
+void test_v2_metadata_migration()
+{
+    TemporaryDatabase database;
+    sqlite3* raw = nullptr;
+    expect(sqlite3_open(database.path.c_str(), &raw) == SQLITE_OK,
+           "legacy v2 test database opens");
+    if (!raw) {
+        return;
+    }
+    const char* schema =
+        "CREATE TABLE tasks ("
+        "id TEXT PRIMARY KEY NOT NULL,"
+        "idempotency_key TEXT NOT NULL UNIQUE,"
+        "kind TEXT NOT NULL,"
+        "input_content_type TEXT NOT NULL,"
+        "input TEXT NOT NULL,"
+        "max_input_bytes INTEGER NOT NULL,"
+        "max_output_bytes INTEGER NOT NULL,"
+        "max_runtime_ms INTEGER NOT NULL,"
+        "max_attempts INTEGER NOT NULL,"
+        "attempts_started INTEGER NOT NULL,"
+        "status INTEGER NOT NULL,"
+        "lease_owner TEXT,"
+        "lease_expires_at_ms INTEGER,"
+        "cancel_reason TEXT NOT NULL,"
+        "result_content_type TEXT,"
+        "result_output TEXT,"
+        "result_failure_code TEXT,"
+        "result_failure_message TEXT"
+        ");"
+        "PRAGMA user_version=2;";
+    char* error = nullptr;
+    if (sqlite3_exec(raw, schema, nullptr, nullptr, &error) != SQLITE_OK) {
+        std::cerr << "FAIL: create legacy v2 schema: "
+                  << (error ? error : sqlite3_errmsg(raw)) << '\n';
+        ++failures;
+        sqlite3_free(error);
+        sqlite3_close(raw);
+        return;
+    }
+    sqlite3_close(raw);
+
+    {
+        SqliteStore migrated(database.path.string());
+        auto task = make_task("migrated", "migrated");
+        migrated.save(task);
+        Runtime runtime(migrated, [] { return TimePoint{} + 1s; });
+        runtime.recover();
+        expect(runtime.start("migrated", "worker"),
+               "migrated v2 task can start");
+        expect(runtime.succeed("migrated", "ok", "text/plain",
+                               "application/json", "{\"total_tokens\":9}")
+                   == FinishResult::accepted,
+               "migrated v2 task accepts structured metadata");
+    }
+
+    SqliteStore reopened(database.path.string());
+    const auto task = reopened.find("migrated");
+    expect(task && task->result
+               && task->result->metadata_content_type == "application/json"
+               && task->result->metadata == "{\"total_tokens\":9}",
+           "v2 to v3 metadata migration survives reopen");
+
+    sqlite3* check = nullptr;
+    expect(sqlite3_open(database.path.c_str(), &check) == SQLITE_OK,
+           "migrated database reopens for version check");
+    if (check) {
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(check, "PRAGMA user_version", -1,
+                               &statement, nullptr) == SQLITE_OK
+            && sqlite3_step(statement) == SQLITE_ROW) {
+            expect(sqlite3_column_int(statement, 0) == 3,
+                   "metadata migration advances SQLite user_version to 3");
+        } else {
+            expect(false, "read migrated SQLite user_version");
+        }
+        sqlite3_finalize(statement);
+        sqlite3_close(check);
+    }
 }
 
 void test_pending_selection()
@@ -229,6 +315,7 @@ void test_shared_schema_with_action_store()
 int main()
 {
     test_round_trip();
+    test_v2_metadata_migration();
     test_pending_selection();
     test_next_lease_expiry();
     test_atomic_uniqueness();
