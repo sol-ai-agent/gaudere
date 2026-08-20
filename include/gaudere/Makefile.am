@@ -1,1 +1,1 @@
-SUBDIRS = persistence scheduling work
+SUBDIRS = budget persistence scheduling work

@@ -40,6 +40,7 @@ AC_CONFIG_FILES([
     gaudere-persistence-sqlite.pc
     include/Makefile
     include/gaudere/Makefile
+    include/gaudere/budget/Makefile
     include/gaudere/persistence/Makefile
     include/gaudere/persistence/sqlite/Makefile
     include/gaudere/scheduling/Makefile
