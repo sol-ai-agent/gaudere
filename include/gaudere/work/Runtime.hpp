@@ -44,13 +44,19 @@ public:
     [[nodiscard]] bool start(const std::string& id, std::string lease_owner);
     [[nodiscard]] FinishResult succeed(const std::string& id,
                                        std::string output,
-                                       std::string content_type);
+                                       std::string content_type,
+                                       std::string metadata_content_type = {},
+                                       std::string metadata = {});
     [[nodiscard]] bool fail(const std::string& id,
                             std::string failure_code,
-                            std::string failure_message);
+                            std::string failure_message,
+                            std::string metadata_content_type = {},
+                            std::string metadata = {});
     [[nodiscard]] bool require_manual_review(const std::string& id,
                                              std::string failure_code,
-                                             std::string failure_message);
+                                             std::string failure_message,
+                                             std::string metadata_content_type = {},
+                                             std::string metadata = {});
     [[nodiscard]] bool request_cancel(const std::string& id, std::string reason);
     [[nodiscard]] bool mark_cancelled(const std::string& id);
     void request_shutdown() noexcept;
@@ -60,7 +66,9 @@ private:
     [[nodiscard]] bool finish_failure(const std::string& id,
                                       TaskStatus status,
                                       std::string failure_code,
-                                      std::string failure_message);
+                                      std::string failure_message,
+                                      std::string metadata_content_type,
+                                      std::string metadata);
 
     TaskStore& store_;
     Now now_;
