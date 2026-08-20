@@ -90,6 +90,50 @@ void test_limits_and_idempotency()
            "budget scopes are independent");
 }
 
+void test_snapshot_is_observational()
+{
+    TemporaryDatabase database;
+    SqliteStore store(database.path.string());
+    const auto start = TimePoint{} + 150h;
+    const auto limits = policy();
+
+    const auto empty = store.snapshot("provider", start, limits);
+    expect(empty.total_used == 0 && empty.in_window_used == 0
+               && !empty.last_consumed_at
+               && empty.next_new_consumption == ConsumeResult::accepted,
+           "empty snapshot reports an available untouched budget");
+
+    expect(store.consume("provider", "one", start, limits) == ConsumeResult::accepted,
+           "snapshot setup permit one accepted");
+    const auto cooldown = store.snapshot("provider", start + 5min, limits);
+    expect(cooldown.total_used == 1 && cooldown.in_window_used == 1
+               && cooldown.last_consumed_at == start
+               && cooldown.next_new_consumption == ConsumeResult::cooldown,
+           "snapshot reports durable usage and cooldown");
+
+    const auto ready = store.snapshot("provider", start + 15min, limits);
+    expect(ready.next_new_consumption == ConsumeResult::accepted,
+           "snapshot reports readiness exactly at cooldown boundary");
+    expect(store.consume("provider", "two", start + 15min, limits)
+               == ConsumeResult::accepted,
+           "snapshot never consumes the observed permit");
+
+    const auto window_full = store.snapshot("provider", start + 30min, limits);
+    expect(window_full.total_used == 2 && window_full.in_window_used == 2
+               && window_full.last_consumed_at == start + 15min
+               && window_full.next_new_consumption == ConsumeResult::window_exhausted,
+           "snapshot reports rolling-window exhaustion after cooldown");
+
+    const auto window_reopened = store.snapshot("provider", start + 24h + 1ms, limits);
+    expect(window_reopened.total_used == 2 && window_reopened.in_window_used == 1
+               && window_reopened.next_new_consumption == ConsumeResult::accepted,
+           "snapshot reports when an old permit leaves the rolling window");
+
+    const auto rollback = store.snapshot("provider", start - 1ms, limits);
+    expect(rollback.next_new_consumption == ConsumeResult::clock_rollback,
+           "snapshot fails closed when wall clock precedes latest consumption");
+}
+
 void test_clock_rollback_fails_closed()
 {
     TemporaryDatabase database;
@@ -123,6 +167,9 @@ void test_reopen_preserves_consumption()
     expect(reopened.consume("provider", "two", start + 1min, limits)
                == ConsumeResult::cooldown,
            "cooldown survives reopen");
+    const auto snapshot = reopened.snapshot("provider", start + 1min, limits);
+    expect(snapshot.total_used == 1 && snapshot.next_new_consumption == ConsumeResult::cooldown,
+           "snapshot observes persisted consumption after reopen");
 }
 
 void test_atomic_total_limit()
@@ -168,13 +215,21 @@ void test_invalid_policy_is_rejected()
     invalid.max_in_window = 2;
     invalid.window = 24h;
 
-    bool threw = false;
+    bool consume_threw = false;
     try {
         static_cast<void>(store.consume("provider", "one", TimePoint{}, invalid));
     } catch (const std::invalid_argument&) {
-        threw = true;
+        consume_threw = true;
     }
-    expect(threw, "invalid policy is rejected before persistence");
+    expect(consume_threw, "invalid policy is rejected before persistence");
+
+    bool snapshot_threw = false;
+    try {
+        static_cast<void>(store.snapshot("provider", TimePoint{}, invalid));
+    } catch (const std::invalid_argument&) {
+        snapshot_threw = true;
+    }
+    expect(snapshot_threw, "invalid policy is rejected before observation");
 }
 
 } // namespace
@@ -182,6 +237,7 @@ void test_invalid_policy_is_rejected()
 int main()
 {
     test_limits_and_idempotency();
+    test_snapshot_is_observational();
     test_clock_rollback_fails_closed();
     test_reopen_preserves_consumption();
     test_atomic_total_limit();
