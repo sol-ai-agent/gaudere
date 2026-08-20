@@ -37,6 +37,10 @@ struct TaskResult {
     std::string output;
     std::string failure_code;
     std::string failure_message;
+    // Optional machine-readable result metadata is deliberately separate from
+    // user-visible output. Both fields are empty when metadata is absent.
+    std::string metadata_content_type;
+    std::string metadata;
 };
 
 struct Task {
