@@ -103,7 +103,7 @@ ActionStore::ActionStore(const std::string& path)
             throw std::runtime_error(sqlite3_errmsg(database_));
         }
         const int version = sqlite3_column_int(version_statement.get(), 0);
-        if (version > 2) {
+        if (version > 3) {
             throw std::runtime_error("unsupported SQLite schema version");
         }
         execute(database_,

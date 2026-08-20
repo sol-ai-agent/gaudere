@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace gaudere::work {
 
@@ -33,10 +34,31 @@ struct Lease {
 };
 
 struct TaskResult {
+    TaskResult() = default;
+
+    TaskResult(std::string content_type_value,
+               std::string output_value,
+               std::string failure_code_value,
+               std::string failure_message_value,
+               std::string metadata_content_type_value = {},
+               std::string metadata_value = {})
+        : content_type(std::move(content_type_value)),
+          output(std::move(output_value)),
+          failure_code(std::move(failure_code_value)),
+          failure_message(std::move(failure_message_value)),
+          metadata_content_type(std::move(metadata_content_type_value)),
+          metadata(std::move(metadata_value))
+    {
+    }
+
     std::string content_type;
     std::string output;
     std::string failure_code;
     std::string failure_message;
+    // Optional machine-readable result metadata is deliberately separate from
+    // user-visible output. Both fields are empty when metadata is absent.
+    std::string metadata_content_type;
+    std::string metadata;
 };
 
 struct Task {

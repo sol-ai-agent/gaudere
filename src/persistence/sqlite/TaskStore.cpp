@@ -45,6 +45,25 @@ void execute(sqlite3* database, const char* sql)
     }
 }
 
+bool has_column(sqlite3* database, const char* table, const char* column)
+{
+    const std::string sql = std::string{"PRAGMA table_info("} + table + ")";
+    Statement statement(database, sql.c_str());
+    for (;;) {
+        const int result = sqlite3_step(statement.get());
+        if (result == SQLITE_DONE) {
+            return false;
+        }
+        if (result != SQLITE_ROW) {
+            throw std::runtime_error(sqlite3_errmsg(database));
+        }
+        const auto* name = sqlite3_column_text(statement.get(), 1);
+        if (name && std::string(reinterpret_cast<const char*>(name)) == column) {
+            return true;
+        }
+    }
+}
+
 std::int64_t milliseconds(const TimePoint value)
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -104,7 +123,8 @@ Task read_task(sqlite3_stmt* statement)
     task.cancel_reason = text(statement, 13);
     if (sqlite3_column_type(statement, 14) != SQLITE_NULL) {
         task.result = TaskResult{text(statement, 14), text(statement, 15),
-                                 text(statement, 16), text(statement, 17)};
+                                 text(statement, 16), text(statement, 17),
+                                 text(statement, 18), text(statement, 19)};
     }
     return task;
 }
@@ -113,7 +133,8 @@ constexpr const char* columns =
     "id,idempotency_key,kind,input_content_type,input,"
     "max_input_bytes,max_output_bytes,max_runtime_ms,max_attempts,"
     "attempts_started,status,lease_owner,lease_expires_at_ms,cancel_reason,"
-    "result_content_type,result_output,result_failure_code,result_failure_message";
+    "result_content_type,result_output,result_failure_code,result_failure_message,"
+    "result_metadata_content_type,result_metadata";
 
 } // namespace
 
@@ -139,7 +160,7 @@ TaskStore::TaskStore(const std::string& path)
             throw std::runtime_error(sqlite3_errmsg(database_));
         }
         const int version = sqlite3_column_int(version_statement.get(), 0);
-        if (version > 2) {
+        if (version > 3) {
             throw std::runtime_error("unsupported SQLite schema version");
         }
 
@@ -163,15 +184,29 @@ TaskStore::TaskStore(const std::string& path)
             " result_output TEXT,"
             " result_failure_code TEXT,"
             " result_failure_message TEXT,"
+            " result_metadata_content_type TEXT,"
+            " result_metadata TEXT,"
             " CHECK((lease_owner IS NULL) = (lease_expires_at_ms IS NULL)),"
             " CHECK((status IN (1,2)) = (lease_owner IS NOT NULL)),"
             " CHECK((result_content_type IS NULL) = (result_output IS NULL)),"
             " CHECK((result_content_type IS NULL) = (result_failure_code IS NULL)),"
             " CHECK((result_content_type IS NULL) = (result_failure_message IS NULL)),"
+            " CHECK((result_metadata_content_type IS NULL) = (result_metadata IS NULL)),"
             " CHECK((status BETWEEN 3 AND 6) = (result_content_type IS NOT NULL))"
             ");");
-        if (version < 2) {
-            execute(database_, "PRAGMA user_version=2;");
+
+        // Schema v3 is an additive migration. The column checks make this safe both
+        // when ActionStore created a fresh version-1 database before TaskStore and
+        // when an existing production v2 tasks table is being upgraded.
+        if (!has_column(database_, "tasks", "result_metadata_content_type")) {
+            execute(database_,
+                "ALTER TABLE tasks ADD COLUMN result_metadata_content_type TEXT;");
+        }
+        if (!has_column(database_, "tasks", "result_metadata")) {
+            execute(database_, "ALTER TABLE tasks ADD COLUMN result_metadata TEXT;");
+        }
+        if (version < 3) {
+            execute(database_, "PRAGMA user_version=3;");
         }
         execute(database_, "COMMIT;");
     } catch (...) {
@@ -315,8 +350,9 @@ void TaskStore::save(const Task& task)
         "id,idempotency_key,kind,input_content_type,input,"
         "max_input_bytes,max_output_bytes,max_runtime_ms,max_attempts,"
         "attempts_started,status,lease_owner,lease_expires_at_ms,cancel_reason,"
-        "result_content_type,result_output,result_failure_code,result_failure_message"
-        ") VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18) "
+        "result_content_type,result_output,result_failure_code,result_failure_message,"
+        "result_metadata_content_type,result_metadata"
+        ") VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) "
         "ON CONFLICT(id) DO UPDATE SET "
         "idempotency_key=excluded.idempotency_key,kind=excluded.kind,"
         "input_content_type=excluded.input_content_type,input=excluded.input,"
@@ -326,7 +362,9 @@ void TaskStore::save(const Task& task)
         "lease_owner=excluded.lease_owner,lease_expires_at_ms=excluded.lease_expires_at_ms,"
         "cancel_reason=excluded.cancel_reason,result_content_type=excluded.result_content_type,"
         "result_output=excluded.result_output,result_failure_code=excluded.result_failure_code,"
-        "result_failure_message=excluded.result_failure_message");
+        "result_failure_message=excluded.result_failure_message,"
+        "result_metadata_content_type=excluded.result_metadata_content_type,"
+        "result_metadata=excluded.result_metadata");
 
     bind_text(database_, statement.get(), 1, task.id);
     bind_text(database_, statement.get(), 2, task.idempotency_key);
@@ -356,11 +394,21 @@ void TaskStore::save(const Task& task)
         bind_text(database_, statement.get(), 16, task.result->output);
         bind_text(database_, statement.get(), 17, task.result->failure_code);
         bind_text(database_, statement.get(), 18, task.result->failure_message);
+        if (!task.result->metadata_content_type.empty() || !task.result->metadata.empty()) {
+            bind_text(database_, statement.get(), 19,
+                      task.result->metadata_content_type);
+            bind_text(database_, statement.get(), 20, task.result->metadata);
+        } else {
+            sqlite3_bind_null(statement.get(), 19);
+            sqlite3_bind_null(statement.get(), 20);
+        }
     } else {
         sqlite3_bind_null(statement.get(), 15);
         sqlite3_bind_null(statement.get(), 16);
         sqlite3_bind_null(statement.get(), 17);
         sqlite3_bind_null(statement.get(), 18);
+        sqlite3_bind_null(statement.get(), 19);
+        sqlite3_bind_null(statement.get(), 20);
     }
 
     if (sqlite3_step(statement.get()) != SQLITE_DONE) {
