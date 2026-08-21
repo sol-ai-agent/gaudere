@@ -23,6 +23,8 @@ public:
         const std::string& key) const override;
     [[nodiscard]] std::optional<work::Task> find_pending_for(
         const std::vector<std::string>& accepted_kinds) const override;
+    [[nodiscard]] bool has_nonterminal_for(
+        const std::vector<std::string>& accepted_kinds) const override;
     [[nodiscard]] std::vector<work::Task> leased_with_expired_lease(
         work::TimePoint now) const override;
     [[nodiscard]] std::optional<work::TimePoint> next_lease_expiry() const override;
