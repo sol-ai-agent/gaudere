@@ -26,6 +26,14 @@ public:
     [[nodiscard]] virtual std::optional<Task> find_pending_for(
         const std::vector<std::string>& accepted_kinds) const = 0;
 
+    /** Report whether any nonterminal task has one of the accepted kinds.
+     *
+     * Nonterminal means pending, running, or cancel_requested. This is an
+     * observational query only and never changes task state.
+     */
+    [[nodiscard]] virtual bool has_nonterminal_for(
+        const std::vector<std::string>& accepted_kinds) const = 0;
+
     [[nodiscard]] virtual std::vector<Task> leased_with_expired_lease(
         TimePoint now) const = 0;
     [[nodiscard]] virtual std::optional<TimePoint> next_lease_expiry() const = 0;
