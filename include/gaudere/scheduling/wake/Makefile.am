@@ -3,4 +3,7 @@ gaudere_scheduling_wake_include_HEADERS = \
 	Action.hpp \
 	ActionStore.hpp \
 	Runtime.hpp \
-	Scheduler.hpp
+	Scheduler.hpp \
+	WakeIntent.hpp \
+	WakeIntentRuntime.hpp \
+	WakeIntentStore.hpp
