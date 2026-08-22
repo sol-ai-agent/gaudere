@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <ratio>
 #include <stdexcept>
 #include <utility>
 
@@ -109,15 +110,20 @@ WakeIntentAcceptResult WakeIntentRuntime::accept(
     }
 
     const auto accepted_at = now_milliseconds();
-    const auto remaining = std::chrono::duration_cast<Milliseconds>(
-        WakeIntentTimePoint::max() - accepted_at);
-    if (delay > remaining) {
-        return WakeIntentAcceptResult::invalid;
+    using ClockDuration = WakeIntentTimePoint::duration;
+    if constexpr (std::ratio_less_equal<ClockDuration::period,
+                                         Milliseconds::period>::value) {
+        const auto max_delay =
+            std::chrono::duration_cast<Milliseconds>(ClockDuration::max());
+        if (delay > max_delay) {
+            return WakeIntentAcceptResult::invalid;
+        }
     }
-    const auto system_delay =
-        std::chrono::duration_cast<WakeIntentTimePoint::duration>(delay);
-    if (system_delay <= WakeIntentTimePoint::duration::zero()
-        || accepted_at > WakeIntentTimePoint::max() - system_delay) {
+    const auto system_delay = std::chrono::duration_cast<ClockDuration>(delay);
+    if (system_delay <= ClockDuration::zero()
+        || std::chrono::duration_cast<Milliseconds>(system_delay) != delay
+        || accepted_at.time_since_epoch()
+            > ClockDuration::max() - system_delay) {
         return WakeIntentAcceptResult::invalid;
     }
 

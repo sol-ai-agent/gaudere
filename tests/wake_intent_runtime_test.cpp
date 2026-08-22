@@ -227,6 +227,21 @@ void test_invalid_acceptance_never_reaches_store()
     expect(store.intents.empty(), "invalid acceptance writes no durable intent");
 }
 
+void test_pre_epoch_deadline_uses_checked_addition()
+{
+    MemoryWakeIntentStore store;
+    auto now = WakeIntentTimePoint{-500us};
+    WakeIntentRuntime runtime(store, [&now] { return now; }, "scope", {1});
+
+    expect(runtime.accept("wake", "source", 1s)
+               == WakeIntentAcceptResult::accepted,
+           "pre-epoch clock sample does not overflow deadline arithmetic");
+    const auto accepted = runtime.find("wake");
+    expect(accepted && accepted->accepted_at == WakeIntentTimePoint{-1ms}
+               && accepted->due_at == WakeIntentTimePoint{999ms},
+           "negative clock sample is floored and advanced exactly");
+}
+
 void test_exact_reconciliation_and_clock_rollback()
 {
     MemoryWakeIntentStore store;
@@ -306,6 +321,7 @@ int main()
     test_configuration_validation();
     test_acceptance_is_bounded_and_scoped();
     test_invalid_acceptance_never_reaches_store();
+    test_pre_epoch_deadline_uses_checked_addition();
     test_exact_reconciliation_and_clock_rollback();
     test_revocation_and_due_ordering();
 
