@@ -160,7 +160,7 @@ TaskStore::TaskStore(const std::string& path)
             throw std::runtime_error(sqlite3_errmsg(database_));
         }
         const int version = sqlite3_column_int(version_statement.get(), 0);
-        if (version > 3) {
+        if (version > 4) {
             throw std::runtime_error("unsupported SQLite schema version");
         }
 
