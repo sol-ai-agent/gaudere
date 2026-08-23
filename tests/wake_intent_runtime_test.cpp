@@ -37,6 +37,28 @@ public:
         return std::nullopt;
     }
 
+    WakeIntentScopeInspection inspect_scope(
+        const std::string& scope) const override
+    {
+        if (!valid_wake_intent_identifier(scope)) {
+            throw std::invalid_argument("invalid wake-intent scope");
+        }
+        ++inspection_calls;
+        last_inspected_scope = scope;
+        WakeIntentScopeInspection result;
+        for (const auto& entry : intents) {
+            if (entry.second.scope != scope) {
+                continue;
+            }
+            if (result.result == WakeIntentScopeResult::one) {
+                return {WakeIntentScopeResult::ambiguous, std::nullopt};
+            }
+            result.result = WakeIntentScopeResult::one;
+            result.intent = entry.second;
+        }
+        return result;
+    }
+
     WakeIntentAcceptResult accept(const WakeIntent& intent,
                                   const WakeIntentPolicy& policy) override
     {
@@ -126,6 +148,8 @@ public:
     }
 
     std::map<std::pair<std::string, std::string>, WakeIntent> intents;
+    mutable std::size_t inspection_calls = 0;
+    mutable std::string last_inspected_scope;
 };
 
 int failures = 0;
@@ -227,6 +251,41 @@ void test_invalid_acceptance_never_reaches_store()
     expect(store.intents.empty(), "invalid acceptance writes no durable intent");
 }
 
+void test_scope_inspection_is_fixed_and_bounded()
+{
+    MemoryWakeIntentStore store;
+    auto now = WakeIntentTimePoint{50s};
+    WakeIntentRuntime runtime(store, [&now] { return now; }, "fixed.scope", {2});
+    WakeIntentRuntime other(store, [&now] { return now; }, "other.scope", {1});
+
+    const auto empty = runtime.inspect_scope();
+    expect(empty.result == WakeIntentScopeResult::empty && !empty.intent,
+           "fixed-scope inspection reports empty without a selected record");
+    expect(store.last_inspected_scope == "fixed.scope"
+               && store.inspection_calls == 1,
+           "runtime delegates only its constructor-fixed scope");
+
+    expect(other.accept("other", "other-source", 1s)
+               == WakeIntentAcceptResult::accepted,
+           "other-scope inspection fixture accepted");
+    expect(runtime.accept("one", "source-one", 2s)
+               == WakeIntentAcceptResult::accepted,
+           "fixed-scope inspection fixture accepted");
+    const auto one = runtime.inspect_scope();
+    expect(one.result == WakeIntentScopeResult::one && one.intent
+               && one.intent->id == "one"
+               && store.last_inspected_scope == "fixed.scope",
+           "inspection selects the only record in the fixed scope");
+
+    expect(runtime.accept("two", "source-two", 3s)
+               == WakeIntentAcceptResult::accepted,
+           "second fixed-scope inspection fixture accepted");
+    const auto ambiguous = runtime.inspect_scope();
+    expect(ambiguous.result == WakeIntentScopeResult::ambiguous
+               && !ambiguous.intent,
+           "inspection fails closed instead of selecting one of two records");
+}
+
 void test_pre_epoch_deadline_uses_checked_addition()
 {
     MemoryWakeIntentStore store;
@@ -321,6 +380,7 @@ int main()
     test_configuration_validation();
     test_acceptance_is_bounded_and_scoped();
     test_invalid_acceptance_never_reaches_store();
+    test_scope_inspection_is_fixed_and_bounded();
     test_pre_epoch_deadline_uses_checked_addition();
     test_exact_reconciliation_and_clock_rollback();
     test_revocation_and_due_ordering();

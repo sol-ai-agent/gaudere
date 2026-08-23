@@ -35,6 +35,7 @@ public:
         std::string reason);
     [[nodiscard]] std::optional<WakeIntent> find(
         const std::string& id) const;
+    [[nodiscard]] WakeIntentScopeInspection inspect_scope() const;
     [[nodiscard]] std::optional<WakeIntentTimePoint> next_scheduled_at() const;
 
     [[nodiscard]] const std::string& scope() const noexcept;

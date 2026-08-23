@@ -34,6 +34,11 @@ row deletion. Restart can re-arm a future deadline or fire an overdue intent
 exactly once. Firing records observable durable state only and grants no authority
 to create successor work.
 
+For recovery observability, `WakeIntentRuntime::inspect_scope()` exposes only its
+constructor-fixed scope. The store returns `empty`, exactly `one` validated intent,
+or `ambiguous` with no selected record. SQLite orders the read and applies `LIMIT 2`;
+the operation changes no schema or durable bytes and performs no reconciliation.
+
 ## Recoverable external effects
 
 `gaudere::scheduling::wake::Runtime` separates work that is still safe to retry from an external effect that may already have happened. A running `Action` starts with `EffectResult::none`. Immediately before crossing a side-effect boundary, the caller records `record_effect_started()`, which durably changes the effect result to `unknown` while the action remains leased and running.
