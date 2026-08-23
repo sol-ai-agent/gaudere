@@ -98,7 +98,8 @@ int user_version(const std::filesystem::path& path)
 bool execute_sql(const std::filesystem::path& path, const char* sql)
 {
     sqlite3* database = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &database, SQLITE_OPEN_READWRITE, nullptr)
+    if (sqlite3_open_v2(path.c_str(), &database,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr)
         != SQLITE_OK) {
         sqlite3_close(database);
         return false;
