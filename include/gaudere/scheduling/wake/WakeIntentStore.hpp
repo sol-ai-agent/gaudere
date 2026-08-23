@@ -4,6 +4,7 @@
 #include <gaudere/scheduling/wake/WakeIntent.hpp>
 
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace gaudere::scheduling::wake {
@@ -39,10 +40,14 @@ public:
      *
      * Implementations inspect at most two records and distinguish zero, exactly
      * one, and ambiguity. No arbitrary record may be selected when two or more
-     * records exist.
+     * records exist. Stores that have not implemented this optional read surface
+     * fail closed rather than returning incomplete state.
      */
     [[nodiscard]] virtual WakeIntentScopeInspection inspect_scope(
-        const std::string& scope) const = 0;
+        const std::string&) const
+    {
+        throw std::logic_error("wake-intent scope inspection is not supported");
+    }
     [[nodiscard]] virtual WakeIntentAcceptResult accept(
         const WakeIntent& intent,
         const WakeIntentPolicy& policy) = 0;
