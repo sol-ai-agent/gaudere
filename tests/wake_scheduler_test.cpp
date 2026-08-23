@@ -63,6 +63,55 @@ void test_past_deadline_is_due()
     expect(!scheduler.next(), "a due deadline is consumed");
 }
 
+void test_interrupt_preserves_future_deadline()
+{
+    Scheduler scheduler;
+    const auto deadline = Scheduler::Clock::now() + 1h;
+    scheduler.request_at(deadline);
+    auto result = std::async(std::launch::async, [&scheduler] {
+        return scheduler.wait();
+    });
+
+    std::this_thread::sleep_for(20ms);
+    scheduler.interrupt();
+
+    expect(result.wait_for(1s) == std::future_status::ready,
+           "interrupt wakes a blocked waiter");
+    expect(result.get() == WaitResult::interrupted,
+           "wait distinguishes a non-deadline interrupt");
+    expect(scheduler.next() == deadline,
+           "interrupt preserves the exact scheduled deadline");
+}
+
+void test_interrupt_without_deadline()
+{
+    Scheduler scheduler;
+    auto result = std::async(std::launch::async, [&scheduler] {
+        return scheduler.wait();
+    });
+
+    std::this_thread::sleep_for(20ms);
+    scheduler.interrupt();
+
+    expect(result.wait_for(1s) == std::future_status::ready,
+           "interrupt wakes a waiter with no deadline");
+    expect(result.get() == WaitResult::interrupted,
+           "no-deadline interrupt is observational");
+    expect(!scheduler.next(),
+           "no-deadline interrupt does not fabricate a deadline");
+}
+
+void test_due_deadline_wins_over_interrupt()
+{
+    Scheduler scheduler;
+    scheduler.request_at(Scheduler::Clock::now() - 1s);
+    scheduler.interrupt();
+
+    expect(scheduler.wait() == WaitResult::due,
+           "a genuinely due deadline takes precedence over observation interrupt");
+    expect(!scheduler.next(), "due deadline remains consumed exactly once");
+}
+
 void test_stop()
 {
     Scheduler scheduler;
@@ -107,6 +156,9 @@ int main()
     test_first_deadline();
     test_earlier_and_later_deadlines();
     test_past_deadline_is_due();
+    test_interrupt_preserves_future_deadline();
+    test_interrupt_without_deadline();
+    test_due_deadline_wins_over_interrupt();
     test_stop();
     test_wait_recalculates_for_earlier_deadline();
 
