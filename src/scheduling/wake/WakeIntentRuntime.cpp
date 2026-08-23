@@ -163,6 +163,11 @@ std::optional<WakeIntent> WakeIntentRuntime::find(const std::string& id) const
     return store_.find(scope_, id);
 }
 
+WakeIntentScopeInspection WakeIntentRuntime::inspect_scope() const
+{
+    return store_.inspect_scope(scope_);
+}
+
 std::optional<WakeIntentTimePoint> WakeIntentRuntime::next_scheduled_at() const
 {
     return store_.next_scheduled_at(scope_);

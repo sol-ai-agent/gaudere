@@ -4,9 +4,21 @@
 #include <gaudere/scheduling/wake/WakeIntent.hpp>
 
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace gaudere::scheduling::wake {
+
+enum class WakeIntentScopeResult {
+    empty,
+    one,
+    ambiguous
+};
+
+struct WakeIntentScopeInspection {
+    WakeIntentScopeResult result = WakeIntentScopeResult::empty;
+    std::optional<WakeIntent> intent;
+};
 
 /** Durable atomic boundary for exact wake intents.
  *
@@ -24,6 +36,18 @@ public:
     [[nodiscard]] virtual std::optional<WakeIntent> find_by_source(
         const std::string& scope,
         const std::string& source_id) const = 0;
+    /** Inspect one fixed scope without exposing an unbounded list.
+     *
+     * Implementations inspect at most two records and distinguish zero, exactly
+     * one, and ambiguity. No arbitrary record may be selected when two or more
+     * records exist. Stores that have not implemented this optional read surface
+     * fail closed rather than returning incomplete state.
+     */
+    [[nodiscard]] virtual WakeIntentScopeInspection inspect_scope(
+        const std::string&) const
+    {
+        throw std::logic_error("wake-intent scope inspection is not supported");
+    }
     [[nodiscard]] virtual WakeIntentAcceptResult accept(
         const WakeIntent& intent,
         const WakeIntentPolicy& policy) = 0;
