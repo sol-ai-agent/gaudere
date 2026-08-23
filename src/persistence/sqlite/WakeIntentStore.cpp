@@ -15,6 +15,8 @@ using scheduling::wake::WakeIntentAcceptResult;
 using scheduling::wake::WakeIntentPolicy;
 using scheduling::wake::WakeIntentReconcileResult;
 using scheduling::wake::WakeIntentRevokeResult;
+using scheduling::wake::WakeIntentScopeInspection;
+using scheduling::wake::WakeIntentScopeResult;
 using scheduling::wake::WakeIntentStatus;
 using scheduling::wake::WakeIntentTimePoint;
 
@@ -277,6 +279,38 @@ std::optional<WakeIntent> WakeIntentStore::find_by_source(
     const std::string& source_id) const
 {
     return find_one(database_, "source_id", scope, source_id);
+}
+
+WakeIntentScopeInspection WakeIntentStore::inspect_scope(
+    const std::string& scope) const
+{
+    if (!scheduling::wake::valid_wake_intent_identifier(scope)) {
+        throw std::invalid_argument("invalid wake-intent scope");
+    }
+
+    const std::string sql = std::string{"SELECT "} + columns
+        + " FROM wake_intents WHERE scope=?1 ORDER BY id LIMIT 2";
+    Statement statement(database_, sql.c_str());
+    bind_text(database_, statement.get(), 1, scope);
+
+    const int first_result = sqlite3_step(statement.get());
+    if (first_result == SQLITE_DONE) {
+        return {};
+    }
+    if (first_result != SQLITE_ROW) {
+        throw std::runtime_error(sqlite3_errmsg(database_));
+    }
+    const WakeIntent first = read_intent(statement.get());
+
+    const int second_result = sqlite3_step(statement.get());
+    if (second_result == SQLITE_ROW) {
+        static_cast<void>(read_intent(statement.get()));
+        return {WakeIntentScopeResult::ambiguous, std::nullopt};
+    }
+    if (second_result != SQLITE_DONE) {
+        throw std::runtime_error(sqlite3_errmsg(database_));
+    }
+    return {WakeIntentScopeResult::one, first};
 }
 
 WakeIntentAcceptResult WakeIntentStore::accept(

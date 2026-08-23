@@ -12,7 +12,9 @@ namespace gaudere::scheduling::wake {
  *
  * accept() checks the per-scope lifetime policy and inserts in one transaction.
  * reconcile() and revoke() atomically perform the only permitted terminal
- * transitions. Implementations must never delete or recycle an accepted row.
+ * transitions. inspect_scope() is a bounded read that must return no selected
+ * record when a scope contains more than one row. Implementations must never
+ * delete or recycle an accepted row.
  */
 class WakeIntentStore {
 public:
@@ -24,6 +26,8 @@ public:
     [[nodiscard]] virtual std::optional<WakeIntent> find_by_source(
         const std::string& scope,
         const std::string& source_id) const = 0;
+    [[nodiscard]] virtual WakeIntentScopeInspection inspect_scope(
+        const std::string& scope) const = 0;
     [[nodiscard]] virtual WakeIntentAcceptResult accept(
         const WakeIntent& intent,
         const WakeIntentPolicy& policy) = 0;

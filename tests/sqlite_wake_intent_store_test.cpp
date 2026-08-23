@@ -14,10 +14,13 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -95,7 +98,8 @@ int user_version(const std::filesystem::path& path)
 bool execute_sql(const std::filesystem::path& path, const char* sql)
 {
     sqlite3* database = nullptr;
-    if (sqlite3_open_v2(path.c_str(), &database, SQLITE_OPEN_READWRITE, nullptr)
+    if (sqlite3_open_v2(path.c_str(), &database,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr)
         != SQLITE_OK) {
         sqlite3_close(database);
         return false;
@@ -107,6 +111,23 @@ bool execute_sql(const std::filesystem::path& path, const char* sql)
     }
     sqlite3_close(database);
     return result == SQLITE_OK;
+}
+
+std::vector<char> file_bytes(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{}};
+}
+
+bool same_intent(const WakeIntent& left, const WakeIntent& right)
+{
+    return left.scope == right.scope && left.id == right.id
+        && left.source_id == right.source_id
+        && left.accepted_at == right.accepted_at
+        && left.due_at == right.due_at && left.status == right.status
+        && left.terminal_at == right.terminal_at
+        && left.terminal_reason == right.terminal_reason;
 }
 
 gaudere::work::Task task(std::string id)
@@ -329,6 +350,177 @@ void test_clock_rollback_enters_manual_review()
            "revoke rollback never becomes revoked or fired");
 }
 
+void test_scope_inspection_is_bounded_and_read_only()
+{
+    TemporaryDatabase database("wake-inspection");
+    SqliteStore store(database.path.string());
+
+    bool invalid_scope = false;
+    try {
+        static_cast<void>(store.inspect_scope({}));
+    } catch (const std::invalid_argument&) {
+        invalid_scope = true;
+    }
+    expect(invalid_scope, "scope inspection rejects an invalid scope");
+
+    const auto empty = store.inspect_scope("empty.scope");
+    expect(empty.result == WakeIntentScopeResult::empty && !empty.intent,
+           "zero rows return empty without a selected intent");
+
+    const auto scheduled = intent("scheduled.scope", "scheduled", "source-scheduled",
+                                  WakeIntentTimePoint{100s},
+                                  WakeIntentTimePoint{110s});
+    expect(store.accept(scheduled, {1}) == WakeIntentAcceptResult::accepted,
+           "scheduled inspection fixture accepted");
+    const auto scheduled_inspection = store.inspect_scope("scheduled.scope");
+    expect(scheduled_inspection.result == WakeIntentScopeResult::one
+               && scheduled_inspection.intent
+               && same_intent(*scheduled_inspection.intent, scheduled),
+           "one scheduled row round-trips exactly");
+
+    const auto fired = intent("fired.scope", "fired", "source-fired",
+                              WakeIntentTimePoint{200s},
+                              WakeIntentTimePoint{210s});
+    expect(store.accept(fired, {1}) == WakeIntentAcceptResult::accepted,
+           "fired inspection fixture accepted");
+    expect(store.reconcile("fired.scope", WakeIntentTimePoint{210s}).fired == 1,
+           "fired inspection fixture transitioned");
+    const auto fired_inspection = store.inspect_scope("fired.scope");
+    expect(fired_inspection.result == WakeIntentScopeResult::one
+               && fired_inspection.intent
+               && fired_inspection.intent->status == WakeIntentStatus::fired
+               && fired_inspection.intent->terminal_at == WakeIntentTimePoint{210s}
+               && fired_inspection.intent->terminal_reason.empty(),
+           "one fired row round-trips exactly");
+
+    const auto revoked = intent("revoked.scope", "revoked", "source-revoked",
+                                WakeIntentTimePoint{300s},
+                                WakeIntentTimePoint{310s});
+    expect(store.accept(revoked, {1}) == WakeIntentAcceptResult::accepted,
+           "revoked inspection fixture accepted");
+    expect(store.revoke("revoked.scope", "revoked", WakeIntentTimePoint{305s},
+                        "operator request") == WakeIntentRevokeResult::revoked,
+           "revoked inspection fixture transitioned");
+    const auto revoked_inspection = store.inspect_scope("revoked.scope");
+    expect(revoked_inspection.result == WakeIntentScopeResult::one
+               && revoked_inspection.intent
+               && revoked_inspection.intent->status == WakeIntentStatus::revoked
+               && revoked_inspection.intent->terminal_at == WakeIntentTimePoint{305s}
+               && revoked_inspection.intent->terminal_reason == "operator request",
+           "one revoked row round-trips exactly");
+
+    const auto reviewed = intent("review.scope", "review", "source-review",
+                                 WakeIntentTimePoint{400s},
+                                 WakeIntentTimePoint{410s});
+    expect(store.accept(reviewed, {1}) == WakeIntentAcceptResult::accepted,
+           "manual-review inspection fixture accepted");
+    expect(store.reconcile("review.scope", WakeIntentTimePoint{399s}).manual_review
+               == 1,
+           "manual-review inspection fixture transitioned");
+    const auto reviewed_inspection = store.inspect_scope("review.scope");
+    expect(reviewed_inspection.result == WakeIntentScopeResult::one
+               && reviewed_inspection.intent
+               && reviewed_inspection.intent->status
+                    == WakeIntentStatus::manual_review
+               && reviewed_inspection.intent->terminal_at
+                    == WakeIntentTimePoint{399s}
+               && reviewed_inspection.intent->terminal_reason == "clock_rollback",
+           "one manual-review row round-trips exactly");
+
+    expect(store.accept(intent("ambiguous.scope", "a", "source-a",
+                               WakeIntentTimePoint{500s},
+                               WakeIntentTimePoint{510s}), {2})
+               == WakeIntentAcceptResult::accepted,
+           "first ambiguous inspection fixture accepted");
+    expect(store.accept(intent("ambiguous.scope", "b", "source-b",
+                               WakeIntentTimePoint{500s},
+                               WakeIntentTimePoint{520s}), {2})
+               == WakeIntentAcceptResult::accepted,
+           "second ambiguous inspection fixture accepted");
+    const auto ambiguous = store.inspect_scope("ambiguous.scope");
+    expect(ambiguous.result == WakeIntentScopeResult::ambiguous
+               && !ambiguous.intent,
+           "two rows fail closed without an arbitrarily selected intent");
+
+    const auto database_before = file_bytes(database.path);
+    const auto wal_path = std::filesystem::path{database.path.string() + "-wal"};
+    const auto wal_before = file_bytes(wal_path);
+    for (int repeat = 0; repeat != 32; ++repeat) {
+        static_cast<void>(store.inspect_scope("empty.scope"));
+        static_cast<void>(store.inspect_scope("scheduled.scope"));
+        static_cast<void>(store.inspect_scope("fired.scope"));
+        static_cast<void>(store.inspect_scope("revoked.scope"));
+        static_cast<void>(store.inspect_scope("review.scope"));
+        static_cast<void>(store.inspect_scope("ambiguous.scope"));
+    }
+    expect(file_bytes(database.path) == database_before,
+           "repeated scope inspection leaves SQLite main bytes unchanged");
+    expect(file_bytes(wal_path) == wal_before,
+           "repeated scope inspection leaves durable WAL bytes unchanged");
+}
+
+void create_unchecked_wake_fixture(const std::filesystem::path& path,
+                                   const std::string& rows)
+{
+    const std::string sql =
+        "PRAGMA user_version=4;"
+        "CREATE TABLE wake_intents ("
+        "scope TEXT,id TEXT,source_id TEXT,accepted_at_ms INTEGER,"
+        "due_at_ms INTEGER,status INTEGER,terminal_at_ms INTEGER,"
+        "terminal_reason TEXT,PRIMARY KEY(scope,id));" + rows;
+    expect(execute_sql(path, sql.c_str()),
+           "unchecked malformed-row fixture is created");
+}
+
+void test_scope_inspection_validates_each_bounded_row()
+{
+    {
+        TemporaryDatabase database("wake-inspection-malformed-first");
+        create_unchecked_wake_fixture(database.path,
+            "INSERT INTO wake_intents VALUES"
+            "('scope','a','source-a',10,10,0,NULL,'');");
+        SqliteStore store(database.path.string());
+        bool rejected = false;
+        try {
+            static_cast<void>(store.inspect_scope("scope"));
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        expect(rejected, "malformed first persisted row fails closed");
+    }
+
+    {
+        TemporaryDatabase database("wake-inspection-malformed-second");
+        create_unchecked_wake_fixture(database.path,
+            "INSERT INTO wake_intents VALUES"
+            "('scope','a','source-a',0,10,0,NULL,''),"
+            "('scope','b','source-b',10,10,0,NULL,'');");
+        SqliteStore store(database.path.string());
+        bool rejected = false;
+        try {
+            static_cast<void>(store.inspect_scope("scope"));
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        expect(rejected,
+               "ambiguous inspection validates and rejects its second row");
+    }
+
+    {
+        TemporaryDatabase database("wake-inspection-limit-two");
+        create_unchecked_wake_fixture(database.path,
+            "INSERT INTO wake_intents VALUES"
+            "('scope','a','source-a',0,10,0,NULL,''),"
+            "('scope','b','source-b',0,20,0,NULL,''),"
+            "('scope','z','source-z',10,10,0,NULL,'');");
+        SqliteStore store(database.path.string());
+        const auto inspection = store.inspect_scope("scope");
+        expect(inspection.result == WakeIntentScopeResult::ambiguous
+                   && !inspection.intent,
+               "LIMIT 2 bounds decoding after two valid ordered rows");
+    }
+}
+
 void test_atomic_lifetime_limit_across_connections()
 {
     TemporaryDatabase database;
@@ -480,6 +672,8 @@ int main()
     test_exact_due_reconciliation_survives_reopen();
     test_revocation_is_permanent_and_due_wins();
     test_clock_rollback_enters_manual_review();
+    test_scope_inspection_is_bounded_and_read_only();
+    test_scope_inspection_validates_each_bounded_row();
     test_atomic_lifetime_limit_across_connections();
     test_schema_v3_migrates_additively_to_v4();
     test_all_store_construction_orders_accept_v4();

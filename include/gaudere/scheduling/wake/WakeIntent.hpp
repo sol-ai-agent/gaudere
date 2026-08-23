@@ -36,6 +36,17 @@ struct WakeIntent {
     std::string terminal_reason;
 };
 
+enum class WakeIntentScopeResult {
+    empty,
+    one,
+    ambiguous
+};
+
+struct WakeIntentScopeInspection {
+    WakeIntentScopeResult result = WakeIntentScopeResult::empty;
+    std::optional<WakeIntent> intent;
+};
+
 enum class WakeIntentAcceptResult {
     accepted,
     duplicate,

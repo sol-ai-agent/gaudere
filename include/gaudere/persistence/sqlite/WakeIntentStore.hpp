@@ -23,6 +23,8 @@ public:
     [[nodiscard]] std::optional<scheduling::wake::WakeIntent> find_by_source(
         const std::string& scope,
         const std::string& source_id) const override;
+    [[nodiscard]] scheduling::wake::WakeIntentScopeInspection inspect_scope(
+        const std::string& scope) const override;
     [[nodiscard]] scheduling::wake::WakeIntentAcceptResult accept(
         const scheduling::wake::WakeIntent& intent,
         const scheduling::wake::WakeIntentPolicy& policy) override;
