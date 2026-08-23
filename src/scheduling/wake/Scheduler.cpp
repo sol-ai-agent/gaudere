@@ -45,29 +45,47 @@ WaitResult Scheduler::wait()
             return WaitResult::stopped;
         }
 
+        if (deadline_ && Clock::now() >= *deadline_) {
+            deadline_.reset();
+            interrupted_ = false;
+            return WaitResult::due;
+        }
+
+        if (interrupted_) {
+            interrupted_ = false;
+            return WaitResult::interrupted;
+        }
+
         if (!deadline_) {
             condition_.wait(lock, [this] {
-                return stopped_ || deadline_.has_value();
+                return stopped_ || interrupted_ || deadline_.has_value();
             });
             continue;
         }
 
         const auto awaited_deadline = *deadline_;
-        if (Clock::now() >= awaited_deadline) {
-            deadline_.reset();
-            return WaitResult::due;
-        }
-
         condition_.wait_until(lock, awaited_deadline, [this, awaited_deadline] {
-            return stopped_ || !deadline_ || *deadline_ < awaited_deadline;
+            return stopped_ || interrupted_ || !deadline_
+                || *deadline_ < awaited_deadline;
         });
     }
+}
+
+void Scheduler::interrupt()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopped_) {
+        return;
+    }
+    interrupted_ = true;
+    condition_.notify_one();
 }
 
 void Scheduler::stop()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     stopped_ = true;
+    interrupted_ = false;
     deadline_.reset();
     condition_.notify_all();
 }

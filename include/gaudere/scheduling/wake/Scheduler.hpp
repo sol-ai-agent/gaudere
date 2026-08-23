@@ -16,6 +16,7 @@ enum class Update {
 
 enum class WaitResult {
     due,
+    interrupted,
     stopped
 };
 
@@ -23,7 +24,8 @@ enum class WaitResult {
  * Thread-safe owner of one wake-up deadline.
  *
  * The scheduler owns no thread. wait() blocks the calling thread and consumes
- * a due deadline. stop() is permanent and discards any pending deadline.
+ * a due deadline. interrupt() wakes one waiter without changing or consuming the
+ * stored deadline. stop() is permanent and discards any pending deadline.
  */
 class Scheduler {
 public:
@@ -37,12 +39,14 @@ public:
     [[nodiscard]] std::optional<TimePoint> next() const;
 
     WaitResult wait();
+    void interrupt();
     void stop();
 
 private:
     mutable std::mutex mutex_;
     std::condition_variable condition_;
     std::optional<TimePoint> deadline_;
+    bool interrupted_ = false;
     bool stopped_ = false;
 };
 
