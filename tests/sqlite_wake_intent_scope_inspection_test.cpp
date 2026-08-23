@@ -9,7 +9,7 @@
 
 namespace {
 
-using gaudere::persistence::sqlite::WakeIntentStore;
+using SqliteWakeIntentStore = gaudere::persistence::sqlite::WakeIntentStore;
 using namespace gaudere::scheduling::wake;
 using namespace std::chrono_literals;
 
@@ -45,7 +45,7 @@ struct TemporaryDatabase {
 void test_empty_one_ambiguous_and_scope_isolation()
 {
     TemporaryDatabase database;
-    WakeIntentStore store(database.path.string());
+    SqliteWakeIntentStore store(database.path.string());
 
     const auto empty = store.inspect_scope("scope-a");
     expect(empty.result == WakeIntentScopeResult::empty && !empty.intent,
@@ -84,7 +84,7 @@ void test_empty_one_ambiguous_and_scope_isolation()
 void test_terminal_record_is_still_discoverable_and_read_only()
 {
     TemporaryDatabase database;
-    WakeIntentStore store(database.path.string());
+    SqliteWakeIntentStore store(database.path.string());
     auto now = WakeIntentTimePoint{200s};
     WakeIntentRuntime runtime(store, [&now] { return now; }, "scope", {1});
 
@@ -110,7 +110,7 @@ void test_terminal_record_is_still_discoverable_and_read_only()
 void test_invalid_scope_and_default_fail_closed()
 {
     TemporaryDatabase database;
-    WakeIntentStore store(database.path.string());
+    SqliteWakeIntentStore store(database.path.string());
 
     bool invalid_scope = false;
     try {
@@ -120,7 +120,7 @@ void test_invalid_scope_and_default_fail_closed()
     }
     expect(invalid_scope, "invalid scope is rejected");
 
-    class UnsupportedStore final : public WakeIntentStore {
+    class UnsupportedStore final : public gaudere::scheduling::wake::WakeIntentStore {
     public:
         std::optional<WakeIntent> find(const std::string&, const std::string&) const override
         {
