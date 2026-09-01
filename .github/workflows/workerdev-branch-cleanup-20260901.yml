@@ -1,0 +1,91 @@
+name: WorkerDev branch cleanup 2026-09-01
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/workerdev-branch-cleanup-20260901.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify and delete exact stale branch refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: sol-ai-agent
+          DEFAULT_BRANCH: main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          declare -A expected=(
+            ["core/scheduler-observation-interrupt"]="1479c1945c25d4c961d2d698d5eced075540bbd3"
+            ["core/wake-status-scope-inspection"]="ab64cfcfb2cb8cfe2ed0a9ee33472b4adbb6a669"
+          )
+          declare -A proof=(
+            ["core/scheduler-observation-interrupt"]="merged"
+            ["core/wake-status-scope-inspection"]="merged"
+          )
+          mapfile -t branches < <(printf '%s\n' "${!expected[@]}" | sort)
+          deleted=()
+
+          restore_deleted() {
+            local branch
+            set +e
+            for branch in "${deleted[@]}"; do
+              gh api -X POST "repos/$REPO/git/refs" \
+                -f "ref=refs/heads/$branch" \
+                -f "sha=${expected[$branch]}" >/dev/null
+            done
+          }
+          on_exit() {
+            local rc=$?
+            if (( rc != 0 )); then
+              restore_deleted
+            fi
+            exit "$rc"
+          }
+          trap on_exit EXIT
+
+          for branch in "${branches[@]}"; do
+            [[ "$branch" != "$DEFAULT_BRANCH" ]]
+            current="$(gh api "repos/$REPO/git/ref/heads/$branch" --jq .object.sha)"
+            [[ "$current" == "${expected[$branch]}" ]]
+            open_count="$(gh api -X GET "repos/$REPO/pulls" \
+              -f state=open -f "head=$OWNER:$branch" -f per_page=100 --jq length)"
+            [[ "$open_count" == 0 ]]
+
+            if [[ "${proof[$branch]}" == merged ]]; then
+              merged_count="$(gh api -X GET "repos/$REPO/pulls" \
+                -f state=closed -f "head=$OWNER:$branch" -f per_page=100 |
+                jq --arg sha "${expected[$branch]}" \
+                  '[.[] | select(.head.sha == $sha and .merged_at != null)] | length')"
+              [[ "$merged_count" -ge 1 ]]
+            elif [[ "${proof[$branch]}" == absorbed ]]; then
+              comparison="$(gh api "repos/$REPO/compare/$DEFAULT_BRANCH...${expected[$branch]}")"
+              [[ "$(jq -r .ahead_by <<<"$comparison")" == 0 ]]
+            else
+              exit 91
+            fi
+          done
+
+          for branch in "${branches[@]}"; do
+            current="$(gh api "repos/$REPO/git/ref/heads/$branch" --jq .object.sha)"
+            [[ "$current" == "${expected[$branch]}" ]]
+            gh api -X DELETE "repos/$REPO/git/refs/heads/$branch"
+            deleted+=("$branch")
+            printf 'DELETED %s %s %s\n' "$branch" "${expected[$branch]}" "${proof[$branch]}"
+          done
+
+          for branch in "${branches[@]}"; do
+            if gh api "repos/$REPO/git/ref/heads/$branch" >/dev/null 2>&1; then
+              exit 92
+            fi
+          done
+          trap - EXIT
